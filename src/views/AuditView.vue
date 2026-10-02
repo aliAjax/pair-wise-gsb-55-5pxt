@@ -7,11 +7,12 @@ import { useExportMutation } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
-const { data } = storeToRefs(store)
+const { data, migration, activeMode } = storeToRefs(store)
 const exportMutation = useExportMutation()
 const keyword = ref('')
 const action = ref('')
 const preview = ref('')
+const migrating = ref(false)
 
 const actions = computed(() => [...new Set(data.value.audit.map((item) => item.action))])
 const filtered = computed(() =>
@@ -23,6 +24,17 @@ const filtered = computed(() =>
   }),
 )
 
+const migrationStatusText = computed(() => {
+  const status = migration.value?.status
+  if (!status) return '无需升级'
+  return { pending: '待升级', running: '升级中', failed: '升级中断', done: '已完成' }[status]
+})
+const migrationPercent = computed(() => {
+  const item = migration.value
+  if (!item || !item.totalModes) return item?.status === 'done' ? 100 : 0
+  return Math.round((item.doneModes.length / item.totalModes) * 100)
+})
+
 async function exportList() {
   const content = await exportMutation.mutateAsync()
   preview.value = content
@@ -30,11 +42,36 @@ async function exportList() {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `保护定值清单-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.download = `保护定值清单-${activeMode.value}-${new Date().toISOString().slice(0, 10)}.csv`
   anchor.click()
   URL.revokeObjectURL(url)
-  await store.recordExport('CSV', data.value.settings.length)
-  ElMessage.success('定值清单已导出并写入审计')
+  await store.recordExport('CSV')
+  ElMessage.success(`已按当前方式「${activeMode.value}」导出并写入审计`)
+}
+
+async function runMigration() {
+  migrating.value = true
+  try {
+    await store.runMigration()
+    ElMessage.success('旧数据已拆分为基础定值与方式覆盖')
+  } catch (error) {
+    ElMessage.error(
+      `${error instanceof Error ? error.message : '升级失败'}；断点已保留，可重试继续`,
+    )
+  } finally {
+    migrating.value = false
+  }
+}
+
+async function loadLegacyDemo() {
+  await ElMessageBox.confirm(
+    '将用「按运行方式各存一整份定值」的旧版演示数据覆盖当前数据，用于验证拆分升级流程。',
+    '载入旧版演示数据',
+    { confirmButtonText: '确认载入', cancelButtonText: '取消', type: 'warning' },
+  )
+  await store.loadLegacyDemo()
+  preview.value = ''
+  ElMessage.success('旧版演示数据已载入，可执行拆分升级')
 }
 
 async function resetData() {
@@ -53,15 +90,67 @@ async function resetData() {
   <div>
     <PageHeader
       title="审计与导出"
-      description="追踪设备、定值、问题、场景、基线和导出操作，生成可核对的定值清单。"
+      description="追踪设备、定值、问题、场景、基线和导出操作，按当前运行方式生成可核对的定值清单。"
     >
       <template #actions>
         <el-button @click="resetData">恢复演示数据</el-button>
         <el-button type="primary" :loading="exportMutation.isPending.value" @click="exportList">
-          导出定值清单
+          导出定值清单（{{ activeMode }}）
         </el-button>
       </template>
     </PageHeader>
+
+    <section class="panel">
+      <div class="panel-title">
+        <div>
+          <h3>旧数据升级</h3>
+          <span class="muted">把按运行方式整份存储的定值拆分为「基础定值 + 方式覆盖」，历史基线仍按原快照查看</span>
+        </div>
+        <el-tag
+          :type="migration?.status === 'done' ? 'success' : migration?.status === 'failed' ? 'danger' : 'info'"
+          effect="plain"
+        >
+          {{ migrationStatusText }}
+        </el-tag>
+      </div>
+      <template v-if="migration">
+        <el-progress :percentage="migrationPercent" :status="migration.status === 'failed' ? 'exception' : undefined" />
+        <p class="muted">
+          断点进度：{{ migration.doneModes.length }} / {{ migration.totalModes }} 种方式
+          <template v-if="migration.doneModes.length">（已完成：{{ migration.doneModes.join('、') }}）</template>
+        </p>
+        <el-alert
+          v-if="migration.status === 'failed'"
+          :title="`升级到「${migration.failedMode}」时中断：${migration.error}`"
+          description="已完成的方式保留在断点中，点击重试将从中断处继续，不会重复拆分。"
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        />
+        <el-button
+          v-if="migration.status !== 'done'"
+          type="primary"
+          :loading="migrating"
+          @click="runMigration"
+        >
+          {{ migration.status === 'failed' ? '从断点重试' : '开始拆分升级' }}
+        </el-button>
+        <el-alert
+          v-else
+          title="拆分完成：各方式只保留与基础定值不同的字段，其余字段继承基础定值。"
+          type="success"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        />
+        <el-button v-if="migration.status === 'done'" @click="loadLegacyDemo">再次载入旧版演示数据</el-button>
+      </template>
+      <template v-else>
+        <p class="muted">当前数据已是「基础定值 + 方式覆盖」结构，无需升级。</p>
+        <el-button @click="loadLegacyDemo">载入旧版演示数据</el-button>
+      </template>
+    </section>
 
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索操作、对象或说明" clearable style="width: 280px" />
@@ -89,7 +178,7 @@ async function resetData() {
       <section class="panel">
         <div class="panel-title">
           <h3>导出预览</h3>
-          <el-tag effect="plain">{{ data.settings.length }} 条定值</el-tag>
+          <el-tag effect="plain">{{ activeMode }} · 有效定值</el-tag>
         </div>
         <el-input
           v-if="preview"
@@ -101,7 +190,7 @@ async function resetData() {
         />
         <el-empty v-else description="点击右上角导出后在此预览 CSV 内容" />
         <el-alert
-          title="导出内容来自当前浏览器持久化数据，不会上传到后端。"
+          title="导出内容按当前运行方式合成有效定值（方式覆盖优先，其余继承基础定值），不会上传到后端。"
           type="info"
           :closable="false"
           show-icon

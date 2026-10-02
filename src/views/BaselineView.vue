@@ -5,18 +5,21 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAppStore } from '@/stores/app'
 import { diffSettings } from '@/services/validation'
+import { settingFieldLabels } from '@/services/settings'
 
 const store = useAppStore()
-const { data, settings } = storeToRefs(store)
+const { data, effectiveSettings, activeMode } = storeToRefs(store)
 const selectedId = ref(data.value.activeBaselineId ?? data.value.baselines[0]?.id ?? '')
 const createDialog = ref(false)
+const snapshotDialog = ref(false)
 const baselineNote = ref('')
 const comment = ref('')
 
 const selected = computed(() => data.value.baselines.find((item) => item.id === selectedId.value))
+/** 基线比较认当前运行方式：用当前方式的有效定值与基线快照对比 */
 const diffs = computed(() => {
   if (!selected.value) return []
-  return diffSettings(settings.value, selected.value.snapshot)
+  return diffSettings(effectiveSettings.value, selected.value.snapshot)
 })
 const baselineComments = computed(() =>
   data.value.comments.filter(
@@ -31,15 +34,10 @@ watch(
   },
 )
 
-const fieldLabels: Record<string, string> = {
-  currentA: '电流定值',
-  timeS: '动作时限',
-  direction: '方向',
-  sensitivity: '灵敏度',
-  recloseEnabled: '重合闸投入',
-  recloseDelayS: '重合延迟',
-  startCondition: '启动条件',
-}
+const fieldLabels: Record<string, string> = { ...settingFieldLabels }
+
+const relayName = (relayId: string) =>
+  data.value.devices.find((device) => device.id === relayId)?.name ?? relayId
 
 async function createBaseline() {
   if (!baselineNote.value.trim()) {
@@ -81,7 +79,7 @@ async function submitComment() {
   <div>
     <PageHeader
       title="会签与基线"
-      description="冻结已批准的定值快照；高风险问题未闭环时不允许锁定基线。"
+      description="冻结已批准的定值快照；基线比较与导出认当前运行方式，历史基线仍按原快照查看。"
     >
       <template #actions>
         <el-button @click="createDialog = true">创建基线上会签</el-button>
@@ -104,7 +102,13 @@ async function submitComment() {
         </div>
         <el-table :data="data.baselines" highlight-current-row @current-change="selectedId = $event?.id ?? selectedId">
           <el-table-column prop="version" label="版本" width="90" />
-          <el-table-column prop="note" label="说明" min-width="220" />
+          <el-table-column prop="note" label="说明" min-width="200" />
+          <el-table-column label="运行方式" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.operationMode" effect="plain" size="small">{{ row.operationMode }}</el-tag>
+              <span v-else class="muted">整份快照</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="createdBy" label="创建人" width="95" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
@@ -130,13 +134,19 @@ async function submitComment() {
         <template v-if="selected">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="基线说明">{{ selected.note }}</el-descriptions-item>
+            <el-descriptions-item label="运行方式">
+              {{ selected.operationMode ?? '旧版整份快照（未按方式拆分）' }}
+            </el-descriptions-item>
             <el-descriptions-item label="创建时间">
               {{ new Date(selected.createdAt).toLocaleString('zh-CN') }}
             </el-descriptions-item>
             <el-descriptions-item label="锁定时间">
               {{ selected.lockedAt ? new Date(selected.lockedAt).toLocaleString('zh-CN') : '尚未锁定' }}
             </el-descriptions-item>
-            <el-descriptions-item label="快照定值">{{ selected.snapshot.length }} 条</el-descriptions-item>
+            <el-descriptions-item label="快照定值">
+              {{ selected.snapshot.length }} 条
+              <el-button link type="primary" @click="snapshotDialog = true">查看原快照</el-button>
+            </el-descriptions-item>
             <el-descriptions-item label="校验码">
               <span class="mono">{{ selected.checksum }}</span>
             </el-descriptions-item>
@@ -144,15 +154,14 @@ async function submitComment() {
 
           <div class="panel-title" style="margin-top: 18px">
             <h3>与当前定值差异</h3>
+            <el-tag effect="plain">按当前方式：{{ activeMode }}</el-tag>
             <el-tag :type="diffs.length ? 'warning' : 'success'" effect="plain">
               {{ diffs.length }} 项变化
             </el-tag>
           </div>
           <el-table :data="diffs" max-height="260">
             <el-table-column label="保护装置" width="115">
-              <template #default="{ row }">
-                {{ data.devices.find((device) => device.id === row.relayName)?.name ?? row.relayName }}
-              </template>
+              <template #default="{ row }">{{ relayName(row.relayName) }}</template>
             </el-table-column>
             <el-table-column label="字段" width="110">
               <template #default="{ row }">{{ fieldLabels[row.field] ?? row.field }}</template>
@@ -224,6 +233,10 @@ async function submitComment() {
         <el-form-item label="基线说明" required>
           <el-input v-model="baselineNote" type="textarea" :rows="4" placeholder="说明变更范围、计算依据和会签要求" />
         </el-form-item>
+        <el-form-item label="运行方式">
+          <el-tag effect="plain">{{ activeMode }}</el-tag>
+          <span class="form-note">快照与校验码按当前方式的有效定值生成</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialog = false">取消</el-button>
@@ -231,6 +244,34 @@ async function submitComment() {
           提交会签
         </el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="snapshotDialog"
+      :title="`${selected?.version ?? ''} 原快照（${selected?.operationMode ?? '旧版整份'}）`"
+      width="760px"
+    >
+      <el-alert
+        title="历史基线按创建时的原快照保留，不随基础定值或方式覆盖调整。"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <el-table :data="selected?.snapshot ?? []" max-height="420">
+        <el-table-column label="保护装置" min-width="130">
+          <template #default="{ row }">{{ relayName(row.relayId) }}</template>
+        </el-table-column>
+        <el-table-column prop="stage" label="段位" width="60" />
+        <el-table-column prop="currentA" label="电流(A)" width="90" />
+        <el-table-column prop="timeS" label="时限(s)" width="85" />
+        <el-table-column prop="direction" label="方向" width="110" />
+        <el-table-column prop="sensitivity" label="灵敏度" width="85" />
+        <el-table-column label="重合闸" width="90">
+          <template #default="{ row }">{{ row.recloseEnabled ? `${row.recloseDelayS}s` : '退出' }}</template>
+        </el-table-column>
+        <el-table-column prop="startCondition" label="启动条件" min-width="140" />
+      </el-table>
     </el-dialog>
   </div>
 </template>

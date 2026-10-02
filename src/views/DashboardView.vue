@@ -8,13 +8,25 @@ import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const store = useAppStore()
-const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
+const { data, issues, devices, scenarios, activeBaseline, activeMode, migration, migrationActive } =
+  storeToRefs(store)
 
 const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
 const approvedScenarios = computed(
   () => scenarios.value.filter((scenario) => ['approved', 'locked'].includes(scenario.status)).length,
 )
+const reconfirmScenarios = computed(
+  () => scenarios.value.filter((scenario) => scenario.reconfirmReason).length,
+)
+const migrationHint = computed(() => {
+  const item = migration.value
+  if (!item || !migrationActive.value) return ''
+  if (item.status === 'failed') {
+    return `旧数据拆分升级在「${item.failedMode}」中断，断点已保留（${item.doneModes.length}/${item.totalModes}），可前往数据升级重试。`
+  }
+  return `检测到按运行方式整份存储的旧版定值数据（${item.doneModes.length}/${item.totalModes} 已拆分），请前往「审计与导出 → 数据升级」完成拆分。`
+})
 
 const statusType = (status: string) =>
   status === 'approved' || status === 'locked'
@@ -42,10 +54,32 @@ const statusText = (status: string) =>
       description="聚焦保护配合异常、场景验证和当前可执行基线。全部数据保存在当前浏览器。"
     >
       <template #actions>
+        <el-tag effect="plain">当前方式：{{ activeMode }}</el-tag>
         <el-button @click="router.push('/coordination')">进入配合校核</el-button>
         <el-button type="primary" @click="router.push('/scenarios')">验证故障场景</el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      v-if="migrationHint"
+      :title="migrationHint"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <el-button size="small" type="warning" plain @click="router.push('/audit')">前往数据升级</el-button>
+    </el-alert>
+    <el-alert
+      v-else-if="reconfirmScenarios"
+      :title="`基础定值变更后，${reconfirmScenarios} 个故障场景已退回会签，需重新确认（原动作序列与停电范围已保留）。`"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <el-button size="small" type="warning" plain @click="router.push('/scenarios')">前往确认</el-button>
+    </el-alert>
 
     <section class="metric-grid">
       <div class="metric danger">

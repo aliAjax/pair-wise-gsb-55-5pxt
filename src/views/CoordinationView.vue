@@ -11,7 +11,7 @@ import type { ValidationIssue } from '@/types/domain'
 
 const route = useRoute()
 const store = useAppStore()
-const { data, devices, settings, issues } = storeToRefs(store)
+const { data, devices, effectiveSettings, issues, activeMode } = storeToRefs(store)
 const typeFilter = ref<ValidationIssue['type'] | ''>('')
 const levelFilter = ref<ValidationIssue['level'] | ''>('')
 const statusFilter = ref<ValidationIssue['status'] | ''>('')
@@ -31,7 +31,7 @@ const filtered = computed(() =>
 )
 
 const selectedSetting = computed(() =>
-  settings.value.find((setting) => setting.id === selected.value?.settingIds[0]),
+  effectiveSettings.value.find((setting) => setting.id === selected.value?.settingIds[0]),
 )
 
 const selectedComments = computed(() =>
@@ -126,6 +126,7 @@ async function submitReply() {
         <el-option label="已关闭" value="closed" />
       </el-select>
       <span class="grow" />
+      <el-tag effect="plain">当前方式：{{ activeMode }}</el-tag>
       <span class="muted">当前显示 {{ filtered.length }} / {{ issues.length }} 条</span>
     </div>
 
@@ -175,7 +176,7 @@ async function submitReply() {
             <h3>动作特性定位</h3>
           </div>
           <GuardCurveCanvas
-            :settings="settings"
+            :settings="effectiveSettings"
             :selected-relay-id="selectedSetting?.relayId"
           />
           <div class="timeline-actions" style="margin-top: 14px">

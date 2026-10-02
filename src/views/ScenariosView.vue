@@ -128,7 +128,7 @@ onBeforeUnmount(stopPlayback)
   <div>
     <PageHeader
       title="运行方式与故障场景"
-      description="建立多个运行方式和故障场景，比较保护动作顺序与停电范围，并逐场景完善动作序列。"
+      description="建立多个运行方式和故障场景，比较保护动作顺序与停电范围；定值变更后受影响场景退回会签重新确认。"
     >
       <template #actions>
         <el-button :disabled="!selected || playing" @click="replay">异常场景回放</el-button>
@@ -150,6 +150,9 @@ onBeforeUnmount(stopPlayback)
         />
       </el-select>
       <span class="grow" />
+      <el-tooltip v-if="selected?.reconfirmReason" :content="selected.reconfirmReason" placement="bottom">
+        <el-tag type="danger" effect="plain">待重新确认</el-tag>
+      </el-tooltip>
       <el-tag v-if="selected" :type="statusType(selected.status)" effect="plain">
         {{ statusText(selected.status) }}
       </el-tag>
@@ -176,6 +179,16 @@ onBeforeUnmount(stopPlayback)
             </template>
           </div>
         </div>
+
+        <el-alert
+          v-if="selected.reconfirmReason"
+          :title="selected.reconfirmReason"
+          description="定值变更不影响已审校的动作序列与停电范围，确认无误后重新批准即可。"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 14px"
+        />
 
         <el-timeline>
           <el-timeline-item

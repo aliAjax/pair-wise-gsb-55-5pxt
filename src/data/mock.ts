@@ -3,9 +3,12 @@ import type {
   AuditEntry,
   Device,
   FaultScenario,
+  LegacyProtectionSetting,
   ProtectionSetting,
+  SettingOverride,
 } from '@/types/domain'
 import { validateSettings } from '@/services/validation'
+import { createMigrationCheckpoint } from '@/services/migration'
 
 export const operationModes = ['正常方式', '单母线检修', '线路 N-1', '变压器检修']
 
@@ -272,6 +275,30 @@ const settings: ProtectionSetting[] = [
   },
 ]
 
+const overrides: SettingOverride[] = [
+  {
+    id: 'ovr-l202-1-maint',
+    settingId: 'set-l202-1',
+    operationMode: '单母线检修',
+    changes: { currentA: 5.2, timeS: 0.5 },
+    updatedAt: '2026-09-24T08:00:00.000Z',
+  },
+  {
+    id: 'ovr-t1-2-maint',
+    settingId: 'set-t1-2',
+    operationMode: '单母线检修',
+    changes: { timeS: 0.9 },
+    updatedAt: '2026-09-24T08:00:00.000Z',
+  },
+  {
+    id: 'ovr-l101-2-n1',
+    settingId: 'set-l101-2',
+    operationMode: '线路 N-1',
+    changes: { currentA: 4.2 },
+    updatedAt: '2026-09-25T03:00:00.000Z',
+  },
+]
+
 const scenarios: FaultScenario[] = [
   {
     id: 'sc-101-near',
@@ -345,6 +372,8 @@ export function createInitialState(): AppState {
   return {
     devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
+    overrides: overrides.map((override) => ({ ...override, changes: { ...override.changes } })),
+    activeMode: '正常方式',
     issues: validateSettings(clonedSettings, devices),
     scenarios: scenarios.map((scenario) => ({
       ...scenario,
@@ -376,6 +405,49 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+  }
+}
+
+/** 旧版演示数据：每种运行方式各存一整份定值，等待拆分升级 */
+export function createLegacyState(): AppState {
+  const modeAdjusts: Record<string, Record<string, Partial<Pick<ProtectionSetting, 'currentA' | 'timeS'>>>> = {
+    单母线检修: {
+      'set-l202-1': { currentA: 5.2, timeS: 0.5 },
+      'set-t1-2': { timeS: 0.9 },
+    },
+    '线路 N-1': {
+      'set-l101-2': { currentA: 4.2 },
+    },
+    变压器检修: {
+      'set-t1-1': { currentA: 7.6 },
+      'set-t1-2': { timeS: 0.85 },
+    },
+  }
+  const legacySettings: LegacyProtectionSetting[] = operationModes.flatMap((mode, modeIndex) =>
+    settings.map((setting) => ({
+      ...setting,
+      ...(modeAdjusts[mode]?.[setting.id] ?? {}),
+      id: modeIndex === 0 ? setting.id : `${setting.id}--m${modeIndex}`,
+      operationMode: mode,
+    })),
+  )
+  const initial = createInitialState()
+  return {
+    ...initial,
+    settings: legacySettings,
+    overrides: [],
+    migration: createMigrationCheckpoint(legacySettings),
+    audit: [
+      {
+        id: 'audit-legacy-load',
+        action: '载入旧版数据',
+        target: '按运行方式整份存储的定值',
+        operator: '系统',
+        detail: `检测到 ${operationModes.length} 种运行方式各一整份定值，共 ${legacySettings.length} 条，等待拆分为基础定值与方式覆盖。`,
+        createdAt: new Date().toISOString(),
+      },
+      ...initial.audit,
+    ],
   }
 }
 

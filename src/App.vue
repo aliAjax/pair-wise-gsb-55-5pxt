@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
+import { operationModes } from '@/data/mock'
 
 const route = useRoute()
 const store = useAppStore()
@@ -26,6 +28,15 @@ const menuItems = [
   { path: '/baseline', label: '会签与基线', icon: Tickets },
   { path: '/audit', label: '审计与导出', icon: SetUp },
 ]
+
+async function onModeChange(mode: string) {
+  try {
+    await store.switchMode(mode)
+    ElMessage.success(`已切换至「${mode}」，校核结果已按新方式刷新`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '切换运行方式失败')
+  }
+}
 </script>
 
 <template>
@@ -66,6 +77,16 @@ const menuItems = [
           <h1>{{ title }}</h1>
         </div>
         <div class="header-actions">
+          <span class="header-context">运行方式</span>
+          <el-select
+            :model-value="store.activeMode"
+            style="width: 150px"
+            :disabled="store.migrationActive"
+            :title="store.migrationActive ? '旧版数据升级完成前不能切换运行方式' : '切换后按新方式重新校核'"
+            @change="onModeChange"
+          >
+            <el-option v-for="mode in operationModes" :key="mode" :label="mode" :value="mode" />
+          </el-select>
           <el-tag v-if="store.saving" type="warning">正在保存</el-tag>
           <el-tag v-else type="success">数据已持久化</el-tag>
           <el-avatar :size="32">陈</el-avatar>
