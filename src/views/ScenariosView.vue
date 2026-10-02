@@ -95,6 +95,12 @@ async function changeStatus(status: ReviewStatus) {
   ElMessage.success(`场景状态已更新为${statusText(status)}`)
 }
 
+async function confirmScenario() {
+  if (!selected.value) return
+  await store.confirmScenario(selected.value.id)
+  ElMessage.success('场景已重新确认，动作序列与停电范围保持原样')
+}
+
 async function createScenario() {
   if (!form.name.trim() || !form.faultDeviceId) {
     ElMessage.warning('请填写场景名称并选择故障设备')
@@ -150,6 +156,7 @@ onBeforeUnmount(stopPlayback)
         />
       </el-select>
       <span class="grow" />
+      <el-tag v-if="selected?.reconfirmRequired" type="danger" effect="plain">待重新确认</el-tag>
       <el-tag v-if="selected" :type="statusType(selected.status)" effect="plain">
         {{ statusText(selected.status) }}
       </el-tag>
@@ -157,6 +164,20 @@ onBeforeUnmount(stopPlayback)
 
     <div v-if="selected" class="two-column">
       <section class="panel">
+        <el-alert
+          v-if="selected.reconfirmRequired"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 14px"
+        >
+          <template #title>
+            基础定值或本方式覆盖已变更，受影响场景需重新确认；原动作序列与停电范围已保留。
+            <el-button link type="warning" style="vertical-align: baseline" @click="confirmScenario">
+              确认场景
+            </el-button>
+          </template>
+        </el-alert>
         <div class="panel-title">
           <div>
             <h3>{{ selected.name }}</h3>

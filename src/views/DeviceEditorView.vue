@@ -8,12 +8,13 @@ import PageHeader from '@/components/PageHeader.vue'
 import GuardCurveCanvas from '@/components/GuardCurveCanvas.vue'
 import { useAppStore } from '@/stores/app'
 import { deviceKindLabels, operationModes } from '@/data/mock'
+import { BASE_MODE, changesLabel, diffToChanges, overrideFor } from '@/services/overrides'
 import type { Device, ProtectionSetting } from '@/types/domain'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
-const { devices, settings } = storeToRefs(store)
+const { devices, settings, effectiveSettings, overrides, activeMode } = storeToRefs(store)
 const formRef = ref<FormInstance>()
 const settingFormRef = ref<FormInstance>()
 const settingDialog = ref(false)
@@ -21,9 +22,13 @@ const settingDialog = ref(false)
 const deviceId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''))
 const isCreating = computed(() => !deviceId.value || deviceId.value === 'new')
 const editingDevice = computed(() => devices.value.find((device) => device.id === deviceId.value))
+const isBaseMode = computed(() => activeMode.value === BASE_MODE)
 const relaySettings = computed(() =>
-  settings.value.filter((setting) => setting.relayId === deviceId.value),
+  effectiveSettings.value.filter((setting) => setting.relayId === deviceId.value),
 )
+
+const overrideOf = (settingId: string) =>
+  overrideFor(overrides.value, activeMode.value, settingId)
 
 const emptyDevice = (): Omit<Device, 'id'> => ({
   code: '',
@@ -125,10 +130,27 @@ function openSetting(setting?: ProtectionSetting) {
 
 async function saveSetting() {
   await settingFormRef.value?.validate()
-  await store.saveSetting({ ...settingForm, relayId: deviceId.value })
+  try {
+    await store.saveSetting({ ...settingForm, relayId: deviceId.value })
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '定值保存失败')
+    return
+  }
   settingDialog.value = false
   ElMessage.success('保护定值已保存')
 }
+
+async function clearOverride(settingId: string) {
+  await store.clearOverride(settingId)
+  ElMessage.success('已恢复继承基础定值')
+}
+
+const baseOfForm = computed(() =>
+  settings.value.find((setting) => setting.id === settingForm.id),
+)
+const pendingChanges = computed(() =>
+  baseOfForm.value ? diffToChanges(baseOfForm.value, { ...settingForm }) : {},
+)
 </script>
 
 <template>
@@ -201,35 +223,82 @@ async function saveSetting() {
 
     <section v-if="!isCreating && editingDevice?.kind === 'relay'" class="panel">
       <div class="panel-title">
-        <h3>保护定值</h3>
-        <el-button type="primary" @click="openSetting()">新增定值段</el-button>
+        <div>
+          <h3>保护定值</h3>
+          <span class="muted">当前方式：{{ activeMode }}（{{ isBaseMode ? '编辑基础定值' : '编辑本方式覆盖' }}）</span>
+        </div>
+        <el-tooltip
+          :disabled="isBaseMode"
+          :content="`非基础方式下不能新增定值段，请切换到${BASE_MODE}`"
+          placement="left"
+        >
+          <span>
+            <el-button type="primary" :disabled="!isBaseMode" @click="openSetting()">新增定值段</el-button>
+          </span>
+        </el-tooltip>
       </div>
       <el-table :data="relaySettings">
         <el-table-column prop="stage" label="段位" width="70" />
-        <el-table-column label="保护对象" min-width="170">
+        <el-table-column label="保护对象" min-width="150">
           <template #default="{ row }">
             {{ devices.find((device) => device.id === row.protectedDeviceId)?.name ?? row.protectedDeviceId }}
           </template>
         </el-table-column>
-        <el-table-column prop="currentA" label="电流定值(A)" width="120" />
-        <el-table-column prop="timeS" label="时限(s)" width="100" />
-        <el-table-column prop="direction" label="方向" width="120" />
-        <el-table-column prop="sensitivity" label="灵敏度" width="100" />
-        <el-table-column label="重合闸" width="110">
+        <el-table-column prop="currentA" label="电流定值(A)" width="110" />
+        <el-table-column prop="timeS" label="时限(s)" width="90" />
+        <el-table-column prop="direction" label="方向" width="110" />
+        <el-table-column prop="sensitivity" label="灵敏度" width="90" />
+        <el-table-column label="重合闸" width="100">
           <template #default="{ row }">
             {{ row.recloseEnabled ? `${row.recloseDelayS}s` : '退出' }}
           </template>
         </el-table-column>
-        <el-table-column prop="startCondition" label="启动条件" min-width="170" />
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column prop="startCondition" label="启动条件" min-width="150" />
+        <el-table-column v-if="!isBaseMode" label="取值来源" min-width="150">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="overrideOf(row.id)"
+              :content="`覆盖字段：${changesLabel(overrideOf(row.id)!.changes)}`"
+              placement="left"
+            >
+              <el-tag type="warning" effect="plain">本方式覆盖</el-tag>
+            </el-tooltip>
+            <el-tag v-else type="info" effect="plain">继承基础定值</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openSetting(row)">编辑</el-button>
+            <el-button
+              v-if="!isBaseMode && overrideOf(row.id)"
+              link
+              type="warning"
+              @click="clearOverride(row.id)"
+            >
+              恢复继承
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </section>
 
     <el-dialog v-model="settingDialog" title="保护定值段" width="560px">
+      <el-alert
+        v-if="isBaseMode"
+        :title="`当前为基础方式（${BASE_MODE}）：修改写入基础定值，未覆盖该字段的运行方式将同步继承。`"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+      />
+      <el-alert
+        v-else
+        :title="`当前为「${activeMode}」方式：仅与基础定值不同的字段会保存为本方式覆盖，其余字段继续继承。`"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+      />
       <el-form ref="settingFormRef" :model="settingForm" :rules="settingRules" label-width="110px">
         <el-form-item label="段位">
           <el-radio-group v-model="settingForm.stage">
@@ -282,6 +351,18 @@ async function saveSetting() {
           <el-input v-model="settingForm.startCondition" />
         </el-form-item>
       </el-form>
+      <el-alert
+        v-if="!isBaseMode && baseOfForm"
+        :title="
+          Object.keys(pendingChanges).length
+            ? `将保存为「${activeMode}」覆盖的字段：${changesLabel(pendingChanges)}`
+            : '与基础定值一致，保存后不产生覆盖。'
+        "
+        :type="Object.keys(pendingChanges).length ? 'warning' : 'info'"
+        :closable="false"
+        show-icon
+        style="margin-top: 4px"
+      />
       <template #footer>
         <el-button @click="settingDialog = false">取消</el-button>
         <el-button type="primary" @click="saveSetting">保存定值</el-button>

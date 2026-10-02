@@ -2,8 +2,10 @@
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
+import { operationModes } from '@/data/mock'
 
 const route = useRoute()
 const store = useAppStore()
@@ -16,6 +18,11 @@ watch(
   },
   { immediate: true },
 )
+
+async function onModeChange(mode: string) {
+  await store.switchMode(mode)
+  ElMessage.success(`已切换至「${mode}」，并按该方式重新校核`)
+}
 
 const title = computed(() => String(route.meta.title ?? '工作台'))
 const menuItems = [
@@ -66,6 +73,21 @@ const menuItems = [
           <h1>{{ title }}</h1>
         </div>
         <div class="header-actions">
+          <span class="header-context">运行方式</span>
+          <el-select
+            :model-value="store.activeMode"
+            style="width: 140px"
+            @change="onModeChange"
+          >
+            <el-option v-for="mode in operationModes" :key="mode" :label="mode" :value="mode" />
+          </el-select>
+          <el-tag
+            v-if="store.pendingReconfirmScenarios.length"
+            type="danger"
+            effect="plain"
+          >
+            {{ store.pendingReconfirmScenarios.length }} 个场景待重新确认
+          </el-tag>
           <el-tag v-if="store.saving" type="warning">正在保存</el-tag>
           <el-tag v-else type="success">数据已持久化</el-tag>
           <el-avatar :size="32">陈</el-avatar>

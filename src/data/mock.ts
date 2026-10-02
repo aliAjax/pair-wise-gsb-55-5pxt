@@ -3,9 +3,12 @@ import type {
   AuditEntry,
   Device,
   FaultScenario,
+  ModeOverride,
   ProtectionSetting,
 } from '@/types/domain'
 import { validateSettings } from '@/services/validation'
+import { BASE_MODE, resolveSettings } from '@/services/overrides'
+import { SCHEMA_VERSION, type LegacyAppState } from '@/services/migration'
 
 export const operationModes = ['正常方式', '单母线检修', '线路 N-1', '变压器检修']
 
@@ -272,6 +275,30 @@ const settings: ProtectionSetting[] = [
   },
 ]
 
+const overrides: ModeOverride[] = [
+  {
+    id: 'ovr-单母线检修-set-t1-2',
+    mode: '单母线检修',
+    settingId: 'set-t1-2',
+    changes: { timeS: 0.9 },
+    updatedAt: '2026-09-24T08:00:00.000Z',
+  },
+  {
+    id: 'ovr-单母线检修-set-l202-1',
+    mode: '单母线检修',
+    settingId: 'set-l202-1',
+    changes: { currentA: 6.4, sensitivity: 1.5 },
+    updatedAt: '2026-09-24T08:00:00.000Z',
+  },
+  {
+    id: 'ovr-线路 N-1-set-l101-2',
+    mode: '线路 N-1',
+    settingId: 'set-l101-2',
+    changes: { currentA: 4.2 },
+    updatedAt: '2026-09-24T08:10:00.000Z',
+  },
+]
+
 const scenarios: FaultScenario[] = [
   {
     id: 'sc-101-near',
@@ -342,10 +369,14 @@ const audit: AuditEntry[] = [
 
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const clonedOverrides = overrides.map((override) => ({ ...override, changes: { ...override.changes } }))
   return {
     devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
-    issues: validateSettings(clonedSettings, devices),
+    overrides: clonedOverrides,
+    activeMode: BASE_MODE,
+    schemaVersion: SCHEMA_VERSION,
+    issues: validateSettings(resolveSettings(clonedSettings, clonedOverrides, BASE_MODE), devices),
     scenarios: scenarios.map((scenario) => ({
       ...scenario,
       steps: scenario.steps.map((step) => ({ ...step })),
@@ -376,6 +407,39 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+  }
+}
+
+/**
+ * 演示用：把当前数据回写为 v1 旧版结构（每个方式各一份整份定值），
+ * 交给迁移流程重新拆成「基础定值 + 方式覆盖」。历史基线原样保留。
+ */
+export function createLegacyState(from: AppState): LegacyAppState {
+  const clone = JSON.parse(JSON.stringify(from)) as AppState
+  const tweak = (setting: ProtectionSetting, changes: Partial<ProtectionSetting>) => ({
+    ...setting,
+    ...changes,
+  })
+  return {
+    devices: clone.devices,
+    settings: clone.settings,
+    issues: clone.issues,
+    scenarios: clone.scenarios,
+    baselines: clone.baselines,
+    comments: clone.comments,
+    audit: clone.audit,
+    activeBaselineId: clone.activeBaselineId,
+    schemaVersion: 1,
+    modeSettings: {
+      单母线检修: clone.settings.map((setting) => {
+        if (setting.id === 'set-t1-2') return tweak(setting, { timeS: 0.9 })
+        if (setting.id === 'set-l202-1') return tweak(setting, { currentA: 6.4, sensitivity: 1.5 })
+        return { ...setting }
+      }),
+      '线路 N-1': clone.settings.map((setting) =>
+        setting.id === 'set-l101-2' ? tweak(setting, { currentA: 4.2 }) : { ...setting },
+      ),
+    },
   }
 }
 

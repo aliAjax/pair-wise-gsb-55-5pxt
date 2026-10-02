@@ -9,7 +9,7 @@ import type { DeviceKind, DeviceStatus } from '@/types/domain'
 
 const router = useRouter()
 const store = useAppStore()
-const { devices, settings } = storeToRefs(store)
+const { devices, settings, overrides } = storeToRefs(store)
 const keyword = ref('')
 const kind = ref<DeviceKind | ''>('')
 const status = ref<DeviceStatus | ''>('')
@@ -55,7 +55,9 @@ const statusText = (value: DeviceStatus) =>
         <el-option label="停用" value="stopped" />
       </el-select>
       <span class="grow" />
-      <span class="muted">共 {{ filtered.length }} 台设备 · {{ settings.length }} 份定值</span>
+      <span class="muted">
+        共 {{ filtered.length }} 台设备 · {{ settings.length }} 份基础定值 · {{ overrides.length }} 项方式覆盖
+      </span>
     </div>
 
     <section class="panel">

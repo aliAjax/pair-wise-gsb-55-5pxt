@@ -7,16 +7,17 @@ import { useAppStore } from '@/stores/app'
 import { diffSettings } from '@/services/validation'
 
 const store = useAppStore()
-const { data, settings } = storeToRefs(store)
+const { data, effectiveSettings, activeMode } = storeToRefs(store)
 const selectedId = ref(data.value.activeBaselineId ?? data.value.baselines[0]?.id ?? '')
 const createDialog = ref(false)
+const snapshotDialog = ref(false)
 const baselineNote = ref('')
 const comment = ref('')
 
 const selected = computed(() => data.value.baselines.find((item) => item.id === selectedId.value))
 const diffs = computed(() => {
   if (!selected.value) return []
-  return diffSettings(settings.value, selected.value.snapshot)
+  return diffSettings(effectiveSettings.value, selected.value.snapshot)
 })
 const baselineComments = computed(() =>
   data.value.comments.filter(
@@ -104,7 +105,13 @@ async function submitComment() {
         </div>
         <el-table :data="data.baselines" highlight-current-row @current-change="selectedId = $event?.id ?? selectedId">
           <el-table-column prop="version" label="版本" width="90" />
-          <el-table-column prop="note" label="说明" min-width="220" />
+          <el-table-column prop="note" label="说明" min-width="200" />
+          <el-table-column label="方式" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.mode" size="small" effect="plain">{{ row.mode }}</el-tag>
+              <span v-else class="muted">历史快照</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="createdBy" label="创建人" width="95" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
@@ -130,13 +137,19 @@ async function submitComment() {
         <template v-if="selected">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="基线说明">{{ selected.note }}</el-descriptions-item>
+            <el-descriptions-item label="录制方式">
+              {{ selected.mode ?? '历史快照（未记录方式）' }}
+            </el-descriptions-item>
             <el-descriptions-item label="创建时间">
               {{ new Date(selected.createdAt).toLocaleString('zh-CN') }}
             </el-descriptions-item>
             <el-descriptions-item label="锁定时间">
               {{ selected.lockedAt ? new Date(selected.lockedAt).toLocaleString('zh-CN') : '尚未锁定' }}
             </el-descriptions-item>
-            <el-descriptions-item label="快照定值">{{ selected.snapshot.length }} 条</el-descriptions-item>
+            <el-descriptions-item label="快照定值">
+              {{ selected.snapshot.length }} 条
+              <el-button link type="primary" @click="snapshotDialog = true">查看原快照</el-button>
+            </el-descriptions-item>
             <el-descriptions-item label="校验码">
               <span class="mono">{{ selected.checksum }}</span>
             </el-descriptions-item>
@@ -144,10 +157,23 @@ async function submitComment() {
 
           <div class="panel-title" style="margin-top: 18px">
             <h3>与当前定值差异</h3>
-            <el-tag :type="diffs.length ? 'warning' : 'success'" effect="plain">
-              {{ diffs.length }} 项变化
-            </el-tag>
+            <div>
+              <el-tag
+                v-if="selected.mode && selected.mode !== activeMode"
+                type="warning"
+                effect="plain"
+                style="margin-right: 8px"
+              >
+                基线方式：{{ selected.mode }}
+              </el-tag>
+              <el-tag :type="diffs.length ? 'warning' : 'success'" effect="plain">
+                {{ diffs.length }} 项变化
+              </el-tag>
+            </div>
           </div>
+          <p class="muted" style="margin: 0 0 10px">
+            差异按当前方式「{{ activeMode }}」的有效定值（基础定值 + 本方式覆盖）计算。
+          </p>
           <el-table :data="diffs" max-height="260">
             <el-table-column label="保护装置" width="115">
               <template #default="{ row }">
@@ -224,6 +250,10 @@ async function submitComment() {
         <el-form-item label="基线说明" required>
           <el-input v-model="baselineNote" type="textarea" :rows="4" placeholder="说明变更范围、计算依据和会签要求" />
         </el-form-item>
+        <el-form-item label="快照方式">
+          <el-tag effect="plain">{{ activeMode }}</el-tag>
+          <span class="form-note">　按当前方式的有效定值录制快照</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialog = false">取消</el-button>
@@ -231,6 +261,28 @@ async function submitComment() {
           提交会签
         </el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="snapshotDialog" :title="`${selected?.version ?? ''} 原快照`" width="880px">
+      <el-alert
+        title="历史基线按原快照保存，定值结构升级（基础定值 + 方式覆盖）不回写快照内容。"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <el-table :data="selected?.snapshot ?? []" max-height="420">
+        <el-table-column prop="id" label="定值编号" width="140" />
+        <el-table-column prop="stage" label="段位" width="66" />
+        <el-table-column prop="currentA" label="电流(A)" width="90" />
+        <el-table-column prop="timeS" label="时限(s)" width="86" />
+        <el-table-column prop="direction" label="方向" width="120" />
+        <el-table-column prop="sensitivity" label="灵敏度" width="86" />
+        <el-table-column label="重合闸" width="90">
+          <template #default="{ row }">{{ row.recloseEnabled ? `${row.recloseDelayS}s` : '退出' }}</template>
+        </el-table-column>
+        <el-table-column prop="startCondition" label="启动条件" min-width="150" />
+      </el-table>
     </el-dialog>
   </div>
 </template>

@@ -8,7 +8,8 @@ import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const store = useAppStore()
-const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
+const { data, issues, devices, scenarios, activeBaseline, pendingReconfirmScenarios } =
+  storeToRefs(store)
 
 const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
@@ -63,6 +64,11 @@ const statusText = (status: string) =>
         <strong>{{ approvedScenarios }} / {{ scenarios.length }}</strong>
         <small>含已批准和已锁定场景</small>
       </div>
+      <div class="metric danger">
+        <span>待重新确认场景</span>
+        <strong>{{ pendingReconfirmScenarios.length }}</strong>
+        <small>定值变更后需复核，动作序列已保留</small>
+      </div>
       <div class="metric">
         <span>当前基线</span>
         <strong>{{ activeBaseline?.version ?? 'V1.0' }}</strong>
@@ -92,10 +98,13 @@ const statusText = (status: string) =>
         <el-table :data="scenarios" max-height="320">
           <el-table-column prop="name" label="场景" min-width="190" />
           <el-table-column prop="operationMode" label="运行方式" width="120" />
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="150">
             <template #default="{ row }">
               <el-tag :type="statusType(row.status)" effect="plain">
                 {{ statusText(row.status) }}
+              </el-tag>
+              <el-tag v-if="row.reconfirmRequired" type="danger" effect="plain" style="margin-left: 6px">
+                待确认
               </el-tag>
             </template>
           </el-table-column>
